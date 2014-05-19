@@ -297,9 +297,6 @@ config SPI_PXA2XX_PCI
 	help
 	  This drivers supports the Intel CE SPI master controller
 
-config SPI_PXA2XX_PCI
-	def_bool SPI_PXA2XX && X86_32 && PCI && !GEN3_SPI 
-
 config SPI_CE5XX_SPI_SLAVE
 	tristate "CE5XX SPI SLAVE"
 	depends on ARCH_GEN3

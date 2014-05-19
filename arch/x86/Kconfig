@@ -516,21 +516,21 @@ choice
 	depends on HW_MUTEXES
 	prompt "MUTEX controller support for Intel CE2600 platform"
 	default MUTEX_FIFO
-	help
+	---help---
 	Allows the configuration of the MUTEX controller working mode in Intel CE platform
 
-	config MUTEX_FIFO
-		bool "FIFO scheduler"
+config MUTEX_FIFO
+	bool "FIFO scheduler"
 	help
 	 Mutex works in FIFO scheduler mode, which is the default behavior
 
-	config MUTEX_NULL
-		bool "Null scheduler"
+config MUTEX_NULL
+	bool "Null scheduler"
 	help
 	 Mutex works in Null scheduler mode
 
-	config MUTEX_POLLING
-		bool "Polling mode"
+config MUTEX_POLLING
+	bool "Polling mode"
 	help
 	 works in polling mode, interrupt is disabled
 
