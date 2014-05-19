@@ -712,6 +712,7 @@ syno_libata_port_power_ctl(struct Scsi_Host *host, u8 blPowerOn)
 END:
 	return iRet;
 }
+EXPORT_SYMBOL(syno_libata_port_power_ctl);
 
 /*
  *
@@ -5782,6 +5783,7 @@ int syno_libata_index_get(struct Scsi_Host *host, uint channel, uint id, uint lu
 
 	return index;
 }
+EXPORT_SYMBOL(syno_libata_index_get);
 #endif
 
 
