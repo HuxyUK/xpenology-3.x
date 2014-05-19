@@ -99,6 +99,7 @@ enum {
 extern unsigned int guiWakeupDisksNum;
 #endif
 
+extern int (*funcSYNODiskRetryReport)(unsigned int, unsigned int);
 
 /* The following table determines how we sequence resets.  Each entry
  * represents timeout for that try.  The first try can be soft or

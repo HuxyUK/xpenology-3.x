@@ -7413,8 +7413,10 @@ int (*funcSYNOSataErrorReport)(unsigned int, unsigned int, unsigned int, unsigne
 EXPORT_SYMBOL(funcSYNOSataErrorReport);
 int (*funcSYNODeepSleepEvent)(unsigned int, unsigned int) = NULL;
 EXPORT_SYMBOL(funcSYNODeepSleepEvent);
+int (*funcSYNODiskRetryReport)(unsigned int, unsigned int) = NULL;
+EXPORT_SYMBOL(funcSYNODiskRetryReport);
 
-#ifdef MY_DEF_HERE
+#if (defined(MY_DEF_HERE) || defined(XPENOLOGY))
 int (*funcSYNOSendEboxRefreshEvent)(int portIndex) = NULL;
 EXPORT_SYMBOL(funcSYNOSendEboxRefreshEvent);
 #endif
