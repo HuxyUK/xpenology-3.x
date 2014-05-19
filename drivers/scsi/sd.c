@@ -94,6 +94,11 @@ MODULE_ALIAS_SCSI_DEVICE(TYPE_DISK);
 MODULE_ALIAS_SCSI_DEVICE(TYPE_MOD);
 MODULE_ALIAS_SCSI_DEVICE(TYPE_RBC);
 
+#ifdef XPENOLOGY
+int gSynoVid;
+int gSynoPid;
+#endif
+
 #if !defined(CONFIG_DEBUG_BLOCK_EXT_DEVT)
 #define SD_MINORS	16
 #else
@@ -3050,8 +3055,8 @@ static SYNO_DISK_TYPE syno_disk_type_get(struct device *dev)
 		if (NULL == usbdev) {
 			return SYNO_DISK_USB;
 		}
-		if (IS_SYNO_USBBOOT_ID_VENDOR(le16_to_cpu(usbdev->descriptor.idVendor)) &&
-			IS_SYNO_USBBOOT_ID_PRODUCT(le16_to_cpu(usbdev->descriptor.idProduct)) &&
+		if ((le16_to_cpu(usbdev->descriptor.idVendor) == gSynoVid) &&
+			(le16_to_cpu(usbdev->descriptor.idProduct) == gSynoPid) &&
 			gSynoHasDynModule) {
 			if (!syno_find_synoboot()) {
 				return SYNO_DISK_SYNOBOOT;

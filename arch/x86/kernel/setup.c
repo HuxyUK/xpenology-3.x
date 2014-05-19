@@ -190,6 +190,14 @@ extern int gSynoFactoryUSB3Disable;
 extern int gSynoDualHead;
 #endif
 
+#ifdef XPENOLOGY
+extern int gSynoVid;
+#endif
+
+#ifdef XPENOLOGY
+extern int gSynoPid;
+#endif
+
 /*
  * end_pfn only includes RAM, while max_pfn_mapped includes all e820 entries.
  * The direct mapping extends to max_pfn_mapped, so that we can directly access
@@ -868,6 +876,28 @@ static int __init early_dual_head(char *p)
 	return 1;
 }
 __setup("dual_head=", early_dual_head);
+#endif
+
+#ifdef XPENOLOGY
+static int __init early_vid(char *p)
+{
+	gSynoVid = simple_strtol(p, NULL, 16);
+
+	printk("synoboot vid: %d\n", gSynoVid);
+
+	return 1;
+}
+__setup("vid=", early_vid);
+
+static int __init early_pid(char *p)
+{
+	gSynoPid = simple_strtol(p, NULL, 16);
+
+	printk("synoboot pid: %d\n", gSynoPid);
+
+	return 1;
+}
+__setup("pid=", early_pid);
 #endif
 
 /*
