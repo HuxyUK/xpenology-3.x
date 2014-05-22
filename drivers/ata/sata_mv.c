@@ -3706,6 +3706,7 @@ EXPORT_SYMBOL(syno_sata_mv_gpio_read);
 /*FIXME - Too brutal and directly, should separate into levels*/
 void syno_sata_mv_gpio_write(u8 blFaulty, const unsigned short hostnum)
 {
+#ifndef XPENOLOGY
 	struct Scsi_Host *shost = scsi_host_lookup(hostnum);
 	struct ata_port *ap = NULL;
 	void __iomem *host_mmio = NULL;
@@ -3740,6 +3741,7 @@ END:
 	if (NULL != shost) {
 		scsi_host_put(shost);
 	}
+#endif
 	return;
 }
 EXPORT_SYMBOL(syno_sata_mv_gpio_write);
