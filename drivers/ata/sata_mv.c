@@ -3666,6 +3666,9 @@ static void syno_mv_phy_ctl(void __iomem *port_mmio, u8 blShutdown)
 #ifdef MY_ABC_HERE
 int syno_sata_mv_gpio_read(const unsigned short hostnum)
 {
+#ifdef XPENOLOGY
+	return 0;
+#else
 	struct Scsi_Host *shost = scsi_host_lookup(hostnum);
 	struct ata_port *ap = NULL;
 	void __iomem *host_mmio = NULL;
@@ -3700,6 +3703,7 @@ END:
 		scsi_host_put(shost);
 	}
 	return ret;
+#endif
 }
 EXPORT_SYMBOL(syno_sata_mv_gpio_read);
 
