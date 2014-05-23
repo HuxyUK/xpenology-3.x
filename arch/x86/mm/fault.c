@@ -688,6 +688,7 @@ static inline void
 show_signal_msg(struct pt_regs *regs, unsigned long error_code,
 		unsigned long address, struct task_struct *tsk)
 {
+#ifndef XPENOLOGY
 	if (!unhandled_signal(tsk, SIGSEGV))
 		return;
 
@@ -702,6 +703,7 @@ show_signal_msg(struct pt_regs *regs, unsigned long error_code,
 	print_vma_addr(KERN_CONT " in ", regs->ip);
 
 	printk(KERN_CONT "\n");
+#endif
 }
 
 static void
