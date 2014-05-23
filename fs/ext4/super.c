@@ -1506,6 +1506,9 @@ enum {
 	Opt_inode_readahead_blks, Opt_journal_ioprio,
 	Opt_dioread_nolock, Opt_dioread_lock,
 	Opt_discard, Opt_nodiscard, Opt_init_itable, Opt_noinit_itable,
+#ifdef CONFIG_EXT4_FS_SYNO_ACL
+	Opt_synoacl, Opt_nosynoacl,
+#endif
 };
 
 static const match_table_t tokens = {
@@ -1529,6 +1532,10 @@ static const match_table_t tokens = {
 	{Opt_nouser_xattr, "nouser_xattr"},
 	{Opt_acl, "acl"},
 	{Opt_noacl, "noacl"},
+#ifdef CONFIG_EXT4_FS_SYNO_ACL
+        {Opt_synoacl, "synoacl"},
+        {Opt_nosynoacl, "nosynoacl"},
+#endif
 	{Opt_noload, "noload"},
 	{Opt_noload, "norecovery"},
 	{Opt_nobh, "nobh"},
@@ -1786,6 +1793,12 @@ static int parse_options(char *options, struct super_block *sb,
 		case Opt_nouser_xattr:
 			ext4_msg(sb, KERN_ERR, "(no)user_xattr options not supported");
 			break;
+#endif
+#ifdef CONFIG_EXT4_FS_SYNO_ACL
+                case Opt_synoacl:
+                case Opt_nosynoacl:
+			/* FIXME: ignore synoacl now */
+                        break;
 #endif
 #ifdef CONFIG_EXT4_FS_POSIX_ACL
 		case Opt_acl:
