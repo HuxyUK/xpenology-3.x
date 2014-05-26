@@ -29,6 +29,10 @@
 #include "xattr.h"
 #include "acl.h"
 
+#ifdef CONFIG_EXT4_FS_SYNO_ACL
+#include "syno_acl.h"
+#endif
+
 /*
  * Called when an inode is released. Note that this is different
  * from ext4_file_open: open gets called at every open, but release
@@ -270,7 +274,12 @@ const struct inode_operations ext4_file_inode_operations = {
 	.listxattr	= ext4_listxattr,
 	.removexattr	= generic_removexattr,
 #endif
+#ifdef CONFIG_EXT4_FS_SYNO_ACL
+	.syno_acl_get   = ext4_get_syno_acl,
+	.syno_acl_set	= ext4_set_syno_acl,
+#else
 	.get_acl	= ext4_get_acl,
+#endif
 	.fiemap		= ext4_fiemap,
 };
 
