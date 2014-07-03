@@ -591,6 +591,10 @@ static int xlvbd_alloc_gendisk(blkif_sector_t capacity,
 	gd->fops = &xlvbd_block_fops;
 	gd->private_data = info;
 	gd->driverfs_dev = &(info->xbdev->dev);
+
+#ifdef XPENOLOGY
+	gd->systemDisk = 1;
+#endif
 	set_capacity(gd, capacity);
 
 	if (xlvbd_init_blk_queue(gd, sector_size)) {
