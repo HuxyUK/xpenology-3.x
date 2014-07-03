@@ -129,7 +129,9 @@ static DEFINE_SPINLOCK(minor_lock);
 #define EMULATED_SD_DISK_MINOR_OFFSET (0)
 #define EMULATED_SD_DISK_NAME_OFFSET (EMULATED_SD_DISK_MINOR_OFFSET / 256)
 
-#define DEV_NAME	"xvd"	/* name in /dev */
+#define DEV_NAME_SCSI  "sd"    /* name in /dev */
+#define DEV_NAME_IDE   "hd"    /* name in /dev */
+#define DEV_NAME_XEN   "xvd"   /* name in /dev */
 
 static int get_id_from_freelist(struct blkfront_info *info)
 {
@@ -568,22 +570,57 @@ static int xlvbd_alloc_gendisk(blkif_sector_t capacity,
 	if (gd == NULL)
 		goto release;
 
+        bool is_ide_device = false;  //BLKIF_MAJOR( info->vdevice ) == XEN_IDE0_MAJOR || BLKIF_MAJOR( info->vdevice ) == XEN_IDE1_MAJOR;
+        bool is_xen_device = BLKIF_MAJOR( info->vdevice ) == XENVBD_MAJOR;
+
 	if (nr_minors > 1) {
 		if (offset < 26)
-			sprintf(gd->disk_name, "%s%c", DEV_NAME, 'a' + offset);
+			if(is_ide_device)
+				sprintf(gd->disk_name, "%s%c", DEV_NAME_IDE, 'a' + offset);
+			else if(is_xen_device)
+				sprintf(gd->disk_name, "%s%c", DEV_NAME_XEN, 'a' + offset);
+			else
+				sprintf(gd->disk_name, "%s%c", DEV_NAME_SCSI, 'a' + offset);
 		else
-			sprintf(gd->disk_name, "%s%c%c", DEV_NAME,
-				'a' + ((offset / 26)-1), 'a' + (offset % 26));
+                       if (is_ide_device)
+                       		sprintf(gd->disk_name, "%s%c%c", DEV_NAME_IDE,
+                       		'a' + ( ( offset / 26 ) - 1 ), 'a' + ( offset % 26 ) );
+                       else if (is_xen_device )
+                       		sprintf( gd->disk_name, "%s%c%c", DEV_NAME_XEN,
+                       		'a' + ( ( offset / 26 ) - 1 ), 'a' + ( offset % 26 ) );
+                       else
+                       		sprintf(gd->disk_name, "%s%c%c", DEV_NAME_SCSI,
+				'a' + ( ( offset / 26 ) - 1 ), 'a' + ( offset % 26 ) );
 	} else {
 		if (offset < 26)
-			sprintf(gd->disk_name, "%s%c%d", DEV_NAME,
-				'a' + offset,
-				minor & (nr_parts - 1));
-		else
-			sprintf(gd->disk_name, "%s%c%c%d", DEV_NAME,
-				'a' + ((offset / 26) - 1),
-				'a' + (offset % 26),
-				minor & (nr_parts - 1));
+                        if (is_ide_device)
+                                sprintf(gd->disk_name, "%s%c%d", DEV_NAME_IDE,
+                                'a' + offset,
+                                minor & ( nr_parts - 1 ) );
+                        else if ( is_xen_device )
+                                sprintf(gd->disk_name, "%s%c%d", DEV_NAME_XEN,
+                                'a' + offset,
+                                minor & ( nr_parts - 1 ) );
+                        else
+                                sprintf(gd->disk_name, "%s%c%d", DEV_NAME_SCSI,
+                                'a' + offset,
+                                minor & ( nr_parts - 1 ) );
+                else
+                        if (is_ide_device)
+                                sprintf(gd->disk_name, "%s%c%c%d", DEV_NAME_IDE,
+                                'a' + ( ( offset / 26 ) - 1 ),
+                                'a' + ( offset % 26 ),
+                                minor & ( nr_parts - 1 ) );
+                        else if (is_xen_device)
+                                sprintf(gd->disk_name, "%s%c%c%d", DEV_NAME_XEN,
+                                'a' + ( ( offset / 26 ) - 1 ),
+                                'a' + ( offset % 26 ),
+                                minor & ( nr_parts - 1 ) );
+                        else
+                                sprintf(gd->disk_name, "%s%c%c%d", DEV_NAME_SCSI,
+                                'a' + ( ( offset / 26 ) - 1 ),
+                                'a' + ( offset % 26 ),
+                                minor & ( nr_parts - 1 ) );
 	}
 
 	gd->major = XENVBD_MAJOR;
