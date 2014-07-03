@@ -124,6 +124,10 @@ extern char gszSynoHWRevision[];
 extern char gszSynoHWVersion[];
 #endif
 
+#ifdef XPENOLOGY
+extern long g_xen_vbd_devices;
+#endif
+
 #ifdef MY_ABC_HERE
 extern long g_internal_hd_num;
 #endif
@@ -634,6 +638,18 @@ static int __init early_hw_revision(char *p)
 	return 1;
 }
 __setup("rev=", early_hw_revision);
+#endif
+
+#ifdef XPENOLOGY
+static int __init early_xen_vbd_count( char *p )
+{
+       g_xen_vbd_devices = simple_strtol( p, NULL, 10 );
+
+       printk( "Xen VBD count: %d\n", (int)g_xen_vbd_devices );
+
+       return 1;
+}
+__setup( "xen_vbd_num=", early_xen_vbd_count );
 #endif
 
 #ifdef MY_ABC_HERE

@@ -116,6 +116,11 @@ int gSynoRaidSyncFlag = 0;
 EXPORT_SYMBOL(gSynoRaidSyncFlag);
 #endif
 
+#ifdef XPENOLOGY
+long g_xen_vbd_devices = 0;
+EXPORT_SYMBOL( g_xen_vbd_devices );
+#endif
+
 #ifdef MY_ABC_HERE
 long g_internal_hd_num = -1;
 long syno_boot_hd_count = 0;
@@ -1221,6 +1226,15 @@ static struct ctl_table kern_table[] = {
 		.mode			= 0444,
 		.proc_handler	= &proc_dostring,
 	},
+#endif
+#ifdef XPENOLOGY
+       {
+                .procname       = "syno_xen_vbd_devices",
+                .data           = &g_xen_vbd_devices,
+                .maxlen         = sizeof( int ),
+                .mode           = 0644,
+                .proc_handler   = &proc_dointvec,
+       },
 #endif
 #ifdef MY_ABC_HERE
 	{
