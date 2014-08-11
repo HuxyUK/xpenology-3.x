@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2011 Junjiro R. Okajima
+ * Copyright (C) 2005-2013 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,23 +24,9 @@
 #include <linux/module.h>
 #include "aufs.h"
 
-/* internal workqueue named AUFS_WKQ_NAME and AUFS_WKQ_PRE_NAME */
-enum {
-	AuWkq_INORMAL,
-	AuWkq_IPRE
-};
+/* internal workqueue named AUFS_WKQ_NAME */
 
-static struct {
-	char *name;
-	struct workqueue_struct *wkq;
-} au_wkq[] = {
-	[AuWkq_INORMAL] = {
-		.name = AUFS_WKQ_NAME
-	},
-	[AuWkq_IPRE] = {
-		.name = AUFS_WKQ_PRE_NAME
-	}
-};
+static struct workqueue_struct *au_wkq;
 
 struct au_wkinfo {
 	struct work_struct wk;
@@ -68,7 +54,7 @@ static void wkq_func(struct work_struct *wk)
 		complete(wkinfo->comp);
 	else {
 		kobject_put(wkinfo->kobj);
-		module_put(THIS_MODULE);
+		module_put(THIS_MODULE); /* todo: ?? */
 		kfree(wkinfo);
 	}
 }
@@ -76,7 +62,7 @@ static void wkq_func(struct work_struct *wk)
 /*
  * Since struct completion is large, try allocating it dynamically.
  */
-#if defined(CONFIG_4KSTACKS) || defined(AuTest4KSTACKS)
+#if 1 /* defined(CONFIG_4KSTACKS) || defined(AuTest4KSTACKS) */
 #define AuWkqCompDeclare(name)	struct completion *comp = NULL
 
 static int au_wkq_comp_alloc(struct au_wkinfo *wkinfo, struct completion **comp)
@@ -114,17 +100,19 @@ static void au_wkq_comp_free(struct completion *comp __maybe_unused)
 }
 #endif /* 4KSTACKS */
 
-static void au_wkq_run(struct au_wkinfo *wkinfo, unsigned int flags)
+static void au_wkq_run(struct au_wkinfo *wkinfo)
 {
-	struct workqueue_struct *wkq;
+	if (au_ftest_wkq(wkinfo->flags, NEST)) {
+		if (au_wkq_test()) {
+			AuWarn1("wkq from wkq, due to a dead dir by UDBA?\n");
+			AuDebugOn(au_ftest_wkq(wkinfo->flags, WAIT));
+		}
+	} else
+		au_dbg_verify_kthread();
 
-	au_dbg_verify_kthread();
-	if (flags & AuWkq_WAIT) {
+	if (au_ftest_wkq(wkinfo->flags, WAIT)) {
 		INIT_WORK_ONSTACK(&wkinfo->wk, wkq_func);
-		wkq = au_wkq[AuWkq_INORMAL].wkq;
-		if (flags & AuWkq_PRE)
-			wkq = au_wkq[AuWkq_IPRE].wkq;
-		queue_work(wkq, &wkinfo->wk);
+		queue_work(au_wkq, &wkinfo->wk);
 	} else {
 		INIT_WORK(&wkinfo->wk, wkq_func);
 		schedule_work(&wkinfo->wk);
@@ -149,7 +137,7 @@ int au_wkq_do_wait(unsigned int flags, au_wkq_func_t func, void *args)
 
 	err = au_wkq_comp_alloc(&wkinfo, &comp);
 	if (!err) {
-		au_wkq_run(&wkinfo, flags);
+		au_wkq_run(&wkinfo);
 		/* no timeout, no interrupt */
 		wait_for_completion(wkinfo.comp);
 		au_wkq_comp_free(comp);
@@ -164,7 +152,8 @@ int au_wkq_do_wait(unsigned int flags, au_wkq_func_t func, void *args)
  * Note: dget/dput() in func for aufs dentries are not supported. It will be a
  * problem in a concurrent umounting.
  */
-int au_wkq_nowait(au_wkq_func_t func, void *args, struct super_block *sb)
+int au_wkq_nowait(au_wkq_func_t func, void *args, struct super_block *sb,
+		  unsigned int flags)
 {
 	int err;
 	struct au_wkinfo *wkinfo;
@@ -179,14 +168,14 @@ int au_wkq_nowait(au_wkq_func_t func, void *args, struct super_block *sb)
 	wkinfo = kmalloc(sizeof(*wkinfo), GFP_NOFS);
 	if (wkinfo) {
 		wkinfo->kobj = &au_sbi(sb)->si_kobj;
-		wkinfo->flags = !AuWkq_WAIT;
+		wkinfo->flags = flags & ~AuWkq_WAIT;
 		wkinfo->func = func;
 		wkinfo->args = args;
 		wkinfo->comp = NULL;
 		kobject_get(wkinfo->kobj);
-		__module_get(THIS_MODULE);
+		__module_get(THIS_MODULE); /* todo: ?? */
 
-		au_wkq_run(wkinfo, !AuWkq_WAIT);
+		au_wkq_run(wkinfo);
 	} else {
 		err = -ENOMEM;
 		au_nwt_done(&au_sbi(sb)->si_nowait);
@@ -206,31 +195,20 @@ void au_nwt_init(struct au_nowait_tasks *nwt)
 
 void au_wkq_fin(void)
 {
-	int i;
-
-	for (i = 0; i < ARRAY_SIZE(au_wkq); i++)
-		if (au_wkq[i].wkq)
-			destroy_workqueue(au_wkq[i].wkq);
+	destroy_workqueue(au_wkq);
 }
 
 int __init au_wkq_init(void)
 {
-	int err, i;
+	int err;
 
 	err = 0;
-	for (i = 0; !err && i < ARRAY_SIZE(au_wkq); i++) {
-		BUILD_BUG_ON(!WQ_RESCUER);
-		au_wkq[i].wkq = alloc_workqueue(au_wkq[i].name, !WQ_RESCUER,
-						WQ_DFL_ACTIVE);
-		if (IS_ERR(au_wkq[i].wkq))
-			err = PTR_ERR(au_wkq[i].wkq);
-		else if (!au_wkq[i].wkq)
-			err = -ENOMEM;
-		if (unlikely(err))
-			au_wkq[i].wkq = NULL;
-	}
-	if (unlikely(err))
-		au_wkq_fin();
+	BUILD_BUG_ON(!WQ_RESCUER);
+	au_wkq = alloc_workqueue(AUFS_WKQ_NAME, !WQ_RESCUER, WQ_DFL_ACTIVE);
+	if (IS_ERR(au_wkq))
+		err = PTR_ERR(au_wkq);
+	else if (!au_wkq)
+		err = -ENOMEM;
 
 	return err;
 }

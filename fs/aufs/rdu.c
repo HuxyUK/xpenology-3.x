@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2011 Junjiro R. Okajima
+ * Copyright (C) 2005-2013 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,8 +23,6 @@
 #include <linux/compat.h>
 #include <linux/fs_stack.h>
 #include <linux/security.h>
-#include <linux/uaccess.h>
-#include <linux/aufs_type.h>
 #include "aufs.h"
 
 /* bits for struct aufs_rdu.flags */
@@ -66,6 +64,7 @@ static int au_rdu_fill(void *__arg, const char *name, int nlen,
 		if (unlikely(nlen > AUFS_MAX_NAMELEN))
 			ent.type = DT_UNKNOWN;
 
+		/* unnecessary to support mmap_sem since this is a dir */
 		err = -EFAULT;
 		if (copy_to_user(arg->ent.e, &ent, sizeof(ent)))
 			goto out;
@@ -239,6 +238,7 @@ static int au_rdu_ino(struct file *file, struct aufs_rdu *rdu)
 	sb = file->f_dentry->d_sb;
 	si_read_lock(sb, AuLock_FLUSH);
 	while (nent-- > 0) {
+		/* unnecessary to support mmap_sem since this is a dir */
 		err = copy_from_user(&ent, u->e, sizeof(ent));
 		if (!err)
 			err = !access_ok(VERIFY_WRITE, &u->e->ino, sizeof(ino));

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2011 Junjiro R. Okajima
+ * Copyright (C) 2005-2013 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,7 +28,6 @@
 #include <linux/file.h>
 #include <linux/fs.h>
 #include <linux/poll.h>
-#include <linux/aufs_type.h>
 #include "rwsem.h"
 
 struct au_branch;
@@ -228,7 +227,7 @@ static inline void au_set_mmapped(struct file *f)
 {
 	if (atomic_inc_return(&au_fi(f)->fi_mmapped))
 		return;
-	pr_warning("fi_mmapped wrapped around\n");
+	pr_warn("fi_mmapped wrapped around\n");
 	while (!atomic_inc_return(&au_fi(f)->fi_mmapped))
 		;
 }
@@ -248,9 +247,12 @@ static inline int au_test_mmapped(struct file *f)
 static inline void au_do_vm_file_reset(struct vm_area_struct *vma,
 				       struct file *file)
 {
-	fput(vma->vm_file);
+	struct file *f;
+
+	f = vma->vm_file;
 	get_file(file);
 	vma->vm_file = file;
+	fput(f);
 }
 
 #ifdef CONFIG_MMU
@@ -268,10 +270,13 @@ static inline void au_vm_file_reset(struct vm_area_struct *vma,
 static inline void au_vm_file_reset(struct vm_area_struct *vma,
 				    struct file *file)
 {
+	struct file *f;
+
 	au_do_vm_file_reset(vma, file);
-	fput(vma->vm_region->vm_file);
+	f = vma->vm_region->vm_file;
 	get_file(file);
 	vma->vm_region->vm_file = file;
+	fput(f);
 }
 #endif /* CONFIG_MMU */
 
@@ -279,13 +284,11 @@ static inline void au_vm_file_reset(struct vm_area_struct *vma,
 static inline void au_vm_prfile_set(struct vm_area_struct *vma,
 				    struct file *file)
 {
-#ifdef CONFIG_AUFS_PROC_MAP
 	get_file(file);
 	vma->vm_prfile = file;
 #ifndef CONFIG_MMU
 	get_file(file);
 	vma->vm_region->vm_prfile = file;
-#endif
 #endif
 }
 

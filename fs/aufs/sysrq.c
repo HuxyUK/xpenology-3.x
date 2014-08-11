@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2011 Junjiro R. Okajima
+ * Copyright (C) 2005-2013 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,9 +20,6 @@
  * magic sysrq hanlder
  */
 
-#include <linux/fs.h>
-#include <linux/module.h>
-#include <linux/moduleparam.h>
 /* #include <linux/sysrq.h> */
 #include <linux/writeback.h>
 #include "aufs.h"
@@ -38,16 +35,18 @@ static void sysrq_sb(struct super_block *sb)
 	plevel = au_plevel;
 	au_plevel = KERN_WARNING;
 
-	sbinfo = au_sbi(sb);
 	/* since we define pr_fmt, call printk directly */
+#define pr(str) printk(KERN_WARNING AUFS_NAME ": " str)
+
+	sbinfo = au_sbi(sb);
 	printk(KERN_WARNING "si=%lx\n", sysaufs_si_id(sbinfo));
-	printk(KERN_WARNING AUFS_NAME ": superblock\n");
+	pr("superblock\n");
 	au_dpri_sb(sb);
 
 #if 0
-	printk(KERN_WARNING AUFS_NAME ": root dentry\n");
+	pr("root dentry\n");
 	au_dpri_dentry(sb->s_root);
-	printk(KERN_WARNING AUFS_NAME ": root inode\n");
+	pr("root inode\n");
 	au_dpri_inode(sb->s_root->d_inode);
 #endif
 
@@ -75,7 +74,7 @@ static void sysrq_sb(struct super_block *sb)
 #if 1
 	{
 		struct inode *i;
-		printk(KERN_WARNING AUFS_NAME ": isolated inode\n");
+		pr("isolated inode\n");
 		spin_lock(&inode_sb_list_lock);
 		list_for_each_entry(i, &sb->s_inodes, i_sb_list) {
 			spin_lock(&i->i_lock);
@@ -86,7 +85,7 @@ static void sysrq_sb(struct super_block *sb)
 		spin_unlock(&inode_sb_list_lock);
 	}
 #endif
-	printk(KERN_WARNING AUFS_NAME ": files\n");
+	pr("files\n");
 	lg_global_lock(files_lglock);
 	do_file_list_for_each_entry(sb, file) {
 		umode_t mode;
@@ -95,8 +94,9 @@ static void sysrq_sb(struct super_block *sb)
 			au_dpri_file(file);
 	} while_file_list_for_each_entry;
 	lg_global_unlock(files_lglock);
-	printk(KERN_WARNING AUFS_NAME ": done\n");
+	pr("done\n");
 
+#undef pr
 	au_plevel = plevel;
 }
 
@@ -112,10 +112,10 @@ static void au_sysrq(int key __maybe_unused)
 	struct au_sbinfo *sbinfo;
 
 	lockdep_off();
-	spin_lock(&au_sbilist.spin);
+	au_sbilist_lock();
 	list_for_each_entry(sbinfo, &au_sbilist.head, si_list)
 		sysrq_sb(sbinfo->si_sb);
-	spin_unlock(&au_sbilist.spin);
+	au_sbilist_unlock();
 	lockdep_on();
 }
 

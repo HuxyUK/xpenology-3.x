@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2011 Junjiro R. Okajima
+ * Copyright (C) 2005-2013 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,12 +20,10 @@
  * sub-routines for VFS
  */
 
-#include <linux/file.h>
 #include <linux/ima.h>
 #include <linux/namei.h>
 #include <linux/security.h>
 #include <linux/splice.h>
-#include <linux/uaccess.h>
 #include "aufs.h"
 
 int vfsub_update_h_iattr(struct path *h_path, int *did)
@@ -453,6 +451,7 @@ out:
 
 /* ---------------------------------------------------------------------- */
 
+/* todo: support mmap_sem? */
 ssize_t vfsub_read_u(struct file *file, char __user *ubuf, size_t count,
 		     loff_t *ppos)
 {
@@ -572,6 +571,24 @@ long vfsub_splice_from(struct pipe_inode_info *pipe, struct file *out,
 	lockdep_on();
 	if (err >= 0)
 		vfsub_update_h_iattr(&out->f_path, /*did*/NULL); /*ignore*/
+	return err;
+}
+
+int vfsub_fsync(struct file *file, struct path *path, int datasync)
+{
+	int err;
+
+	/* file can be NULL */
+	lockdep_off();
+	err = vfs_fsync(file, datasync);
+	lockdep_on();
+	if (!err) {
+		if (!path) {
+			AuDebugOn(!file);
+			path = &file->f_path;
+		}
+		vfsub_update_h_iattr(path, /*did*/NULL); /*ignore*/
+	}
 	return err;
 }
 

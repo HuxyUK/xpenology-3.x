@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2011 Junjiro R. Okajima
+ * Copyright (C) 2005-2013 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,9 +25,7 @@
 
 #ifdef __KERNEL__
 
-#include <linux/fs.h>
 #include <linux/mount.h>
-#include <linux/aufs_type.h>
 #include "dynop.h"
 #include "rwsem.h"
 #include "super.h"
@@ -63,6 +61,18 @@ struct au_wbr {
 /* ext2 has 3 types of operations at least, ext3 has 4 */
 #define AuBrDynOp (AuDyLast * 4)
 
+/* sysfs entries */
+struct au_brsysfs {
+	char			name[16];
+	struct attribute	attr;
+};
+
+enum {
+	AuBrSysfs_BR,
+	AuBrSysfs_BRID,
+	AuBrSysfs_Last
+};
+
 /* protected by superblock rwsem */
 struct au_branch {
 	struct au_xino_file	br_xino;
@@ -70,7 +80,8 @@ struct au_branch {
 	aufs_bindex_t		br_id;
 
 	int			br_perm;
-	struct vfsmount		*br_mnt;
+	unsigned int		br_dflags;
+	struct path		br_path;
 	spinlock_t		br_dykey_lock;
 	struct au_dykey		*br_dykey[AuBrDynOp];
 	atomic_t		br_count;
@@ -78,7 +89,6 @@ struct au_branch {
 	struct au_wbr		*br_wbr;
 
 	/* xino truncation */
-	blkcnt_t		br_xino_upper;	/* watermark in blocks */
 	atomic_t		br_xino_running;
 
 #ifdef CONFIG_AUFS_HFSNOTIFY
@@ -87,43 +97,59 @@ struct au_branch {
 #endif
 
 #ifdef CONFIG_SYSFS
-	/* an entry under sysfs per mount-point */
-	char			br_name[8];
-	struct attribute	br_attr;
+	/* entries under sysfs per mount-point */
+	struct au_brsysfs	br_sysfs[AuBrSysfs_Last];
 #endif
 };
 
 /* ---------------------------------------------------------------------- */
 
-/* branch permission and attribute */
-enum {
-	AuBrPerm_RW,		/* writable, linkable wh */
-	AuBrPerm_RO,		/* readonly, no wh */
-	AuBrPerm_RR,		/* natively readonly, no wh */
+static inline struct vfsmount *au_br_mnt(struct au_branch *br)
+{
+	return br->br_path.mnt;
+}
 
-	AuBrPerm_RWNoLinkWH,	/* un-linkable whiteouts */
+static inline struct dentry *au_br_dentry(struct au_branch *br)
+{
+	return br->br_path.dentry;
+}
 
-	AuBrPerm_ROWH,		/* whiteout-able */
-	AuBrPerm_RRWH,		/* whiteout-able */
+static inline struct super_block *au_br_sb(struct au_branch *br)
+{
+	return au_br_mnt(br)->mnt_sb;
+}
 
-	AuBrPerm_Last
-};
+/* branch permissions and attributes */
+#define AuBrPerm_RW		1		/* writable, hardlinkable wh */
+#define AuBrPerm_RO		(1 << 1)	/* readonly */
+#define AuBrPerm_RR		(1 << 2)	/* natively readonly */
+#define AuBrPerm_Mask		(AuBrPerm_RW | AuBrPerm_RO | AuBrPerm_RR)
+
+#define AuBrRAttr_WH		(1 << 3)	/* whiteout-able */
+
+#define AuBrWAttr_NoLinkWH	(1 << 4)	/* un-hardlinkable whiteouts */
+
+#define AuBrAttr_UNPIN		(1 << 5)	/* rename-able top dir of
+						   branch */
 
 static inline int au_br_writable(int brperm)
 {
-	return brperm == AuBrPerm_RW || brperm == AuBrPerm_RWNoLinkWH;
+	return brperm & AuBrPerm_RW;
 }
 
 static inline int au_br_whable(int brperm)
 {
-	return brperm == AuBrPerm_RW
-		|| brperm == AuBrPerm_ROWH
-		|| brperm == AuBrPerm_RRWH;
+	return brperm & (AuBrPerm_RW | AuBrRAttr_WH);
+}
+
+static inline int au_br_wh_linkable(int brperm)
+{
+	return !(brperm & AuBrWAttr_NoLinkWH);
 }
 
 static inline int au_br_rdonly(struct au_branch *br)
 {
-	return ((br->br_mnt->mnt_sb->s_flags & MS_RDONLY)
+	return ((au_br_sb(br)->s_flags & MS_RDONLY)
 		|| !au_br_writable(br->br_perm))
 		? -EROFS : 0;
 }
@@ -131,7 +157,7 @@ static inline int au_br_rdonly(struct au_branch *br)
 static inline int au_br_hnotifyable(int brperm __maybe_unused)
 {
 #ifdef CONFIG_AUFS_HNOTIFY
-	return brperm != AuBrPerm_RR && brperm != AuBrPerm_RRWH;
+	return !(brperm & AuBrPerm_RR);
 #else
 	return 0;
 #endif
@@ -193,13 +219,13 @@ aufs_bindex_t au_sbr_id(struct super_block *sb, aufs_bindex_t bindex)
 static inline
 struct vfsmount *au_sbr_mnt(struct super_block *sb, aufs_bindex_t bindex)
 {
-	return au_sbr(sb, bindex)->br_mnt;
+	return au_br_mnt(au_sbr(sb, bindex));
 }
 
 static inline
 struct super_block *au_sbr_sb(struct super_block *sb, aufs_bindex_t bindex)
 {
-	return au_sbr_mnt(sb, bindex)->mnt_sb;
+	return au_br_sb(au_sbr(sb, bindex));
 }
 
 static inline void au_sbr_put(struct super_block *sb, aufs_bindex_t bindex)

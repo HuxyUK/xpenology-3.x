@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2011 Junjiro R. Okajima
+ * Copyright (C) 2005-2013 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,7 +20,6 @@
  * whiteout for logical deletion and opaque directory
  */
 
-#include <linux/fs.h>
 #include "aufs.h"
 
 #define WH_MASK			S_IRUGO
@@ -157,7 +156,7 @@ struct dentry *au_whtmp_lkup(struct dentry *h_parent, struct au_branch *br,
 			goto out_name;
 		dput(dentry);
 	}
-	/* pr_warning("could not get random name\n"); */
+	/* pr_warn("could not get random name\n"); */
 	dentry = ERR_PTR(-EEXIST);
 	AuDbg("%.*s\n", AuLNPair(&qs));
 	BUG();
@@ -177,7 +176,7 @@ int au_whtmp_ren(struct dentry *h_dentry, struct au_branch *br)
 {
 	int err;
 	struct path h_path = {
-		.mnt = br->br_mnt
+		.mnt = au_br_mnt(br)
 	};
 	struct inode *h_dir;
 	struct dentry *h_parent;
@@ -236,7 +235,7 @@ static int unlink_wh_name(struct dentry *h_parent, struct qstr *wh,
 {
 	int err;
 	struct path h_path = {
-		.mnt = br->br_mnt
+		.mnt = au_br_mnt(br)
 	};
 
 	err = 0;
@@ -275,8 +274,8 @@ static void au_wh_clean(struct inode *h_dir, struct path *whpath,
 		mnt_drop_write(whpath->mnt);
 	}
 	if (unlikely(err))
-		pr_warning("failed removing %.*s (%d), ignored.\n",
-			   AuDLNPair(whpath->dentry), err);
+		pr_warn("failed removing %.*s (%d), ignored.\n",
+			AuDLNPair(whpath->dentry), err);
 }
 
 static int test_linkable(struct dentry *h_root)
@@ -437,16 +436,14 @@ out:
 /*
  * initialize the whiteout base file/dir for @br.
  */
-int au_wh_init(struct dentry *h_root, struct au_branch *br,
-	       struct super_block *sb)
+int au_wh_init(struct au_branch *br, struct super_block *sb)
 {
 	int err, i;
 	const unsigned char do_plink
 		= !!au_opt_test(au_mntflags(sb), PLINK);
-	struct path path = {
-		.mnt = br->br_mnt
-	};
 	struct inode *h_dir;
+	struct path path = br->br_path;
+	struct dentry *h_root = path.dentry;
 	struct au_wbr *wbr = br->br_wbr;
 	static const struct qstr base_name[] = {
 		[AuBrWh_BASE] = {
@@ -502,33 +499,21 @@ int au_wh_init(struct dentry *h_root, struct au_branch *br,
 		}
 
 	err = 0;
-	switch (br->br_perm) {
-	case AuBrPerm_RO:
-	case AuBrPerm_ROWH:
-	case AuBrPerm_RR:
-	case AuBrPerm_RRWH:
+	if (!au_br_writable(br->br_perm)) {
 		h_dir = h_root->d_inode;
 		au_wh_init_ro(h_dir, base, &path);
-		break;
-
-	case AuBrPerm_RWNoLinkWH:
+	} else if (!au_br_wh_linkable(br->br_perm)) {
 		err = au_wh_init_rw_nolink(h_root, wbr, do_plink, base, &path);
 		if (err > 0)
 			goto out;
 		else if (err)
 			goto out_err;
-		break;
-
-	case AuBrPerm_RW:
+	} else {
 		err = au_wh_init_rw(h_root, wbr, do_plink, base, &path);
 		if (err > 0)
 			goto out;
 		else if (err)
 			goto out_err;
-		break;
-
-	default:
-		BUG();
 	}
 	goto out; /* success */
 
@@ -578,28 +563,29 @@ static void reinit_br_wh(void *arg)
 	dir = a->sb->s_root->d_inode;
 	hdir = au_hi(dir, bindex);
 	h_root = au_h_dptr(a->sb->s_root, bindex);
+	AuDebugOn(h_root != au_br_dentry(a->br));
 
 	au_hn_imtx_lock_nested(hdir, AuLsc_I_PARENT);
 	wbr_wh_write_lock(wbr);
 	err = au_h_verify(wbr->wbr_whbase, au_opt_udba(a->sb), hdir->hi_inode,
 			  h_root, a->br);
 	if (!err) {
-		err = mnt_want_write(a->br->br_mnt);
+		h_path.mnt = au_br_mnt(a->br);
+		err = mnt_want_write(h_path.mnt);
 		if (!err) {
 			h_path.dentry = wbr->wbr_whbase;
-			h_path.mnt = a->br->br_mnt;
 			err = vfsub_unlink(hdir->hi_inode, &h_path, /*force*/0);
-			mnt_drop_write(a->br->br_mnt);
+			mnt_drop_write(h_path.mnt);
 		}
 	} else {
-		pr_warning("%.*s is moved, ignored\n",
-			   AuDLNPair(wbr->wbr_whbase));
+		pr_warn("%.*s is moved, ignored\n",
+			AuDLNPair(wbr->wbr_whbase));
 		err = 0;
 	}
 	dput(wbr->wbr_whbase);
 	wbr->wbr_whbase = NULL;
 	if (!err)
-		err = au_wh_init(h_root, a->br, a->sb);
+		err = au_wh_init(a->br, a->sb);
 	wbr_wh_write_unlock(wbr);
 	au_hn_imtx_unlock(hdir);
 	di_read_unlock(a->sb->s_root, AuLock_IR);
@@ -634,7 +620,7 @@ static void kick_reinit_br_wh(struct super_block *sb, struct au_branch *br)
 		arg->sb = sb;
 		arg->br = br;
 		atomic_inc(&br->br_count);
-		wkq_err = au_wkq_nowait(reinit_br_wh, arg, sb);
+		wkq_err = au_wkq_nowait(reinit_br_wh, arg, sb, /*flags*/0);
 		if (unlikely(wkq_err)) {
 			atomic_dec(&br->br_wbr->wbr_wh_running);
 			atomic_dec(&br->br_count);
@@ -670,7 +656,7 @@ static int link_or_create_wh(struct super_block *sb, aufs_bindex_t bindex,
 	IMustLock(h_dir);
 
 	br = au_sbr(sb, bindex);
-	h_path.mnt = br->br_mnt;
+	h_path.mnt = au_br_mnt(br);
 	wbr = br->br_wbr;
 	wbr_wh_read_lock(wbr);
 	if (wbr->wbr_whbase) {
@@ -719,7 +705,7 @@ static struct dentry *do_diropq(struct dentry *dentry, aufs_bindex_t bindex,
 	} else {
 		struct path tmp = {
 			.dentry = opq_dentry,
-			.mnt	= br->br_mnt
+			.mnt	= au_br_mnt(br)
 		};
 		err = do_unlink_wh(au_h_iptr(dentry->d_inode, bindex), &tmp);
 		if (!err)
@@ -971,7 +957,7 @@ int au_whtmp_rmdir(struct inode *dir, aufs_bindex_t bindex,
 
 	if (!err) {
 		h_tmp.dentry = wh_dentry;
-		h_tmp.mnt = br->br_mnt;
+		h_tmp.mnt = au_br_mnt(br);
 		err = vfsub_rmdir(h_dir, &h_tmp);
 	}
 
@@ -984,8 +970,8 @@ int au_whtmp_rmdir(struct inode *dir, aufs_bindex_t bindex,
 		return 0; /* success */
 	}
 
-	pr_warning("failed removing %.*s(%d), ignored\n",
-		   AuDLNPair(wh_dentry), err);
+	pr_warn("failed removing %.*s(%d), ignored\n",
+		AuDLNPair(wh_dentry), err);
 	return err;
 }
 
@@ -998,6 +984,7 @@ static void call_rmdir_whtmp(void *args)
 	struct dentry *h_parent;
 	struct inode *h_dir;
 	struct au_hinode *hdir;
+	struct vfsmount *h_mnt;
 
 	/* rmdir by nfsd may cause deadlock with this i_mutex */
 	/* mutex_lock(&a->dir->i_mutex); */
@@ -1019,11 +1006,12 @@ static void call_rmdir_whtmp(void *args)
 	err = au_h_verify(a->wh_dentry, au_opt_udba(sb), h_dir, h_parent,
 			  a->br);
 	if (!err) {
-		err = mnt_want_write(a->br->br_mnt);
+		h_mnt = au_br_mnt(a->br);
+		err = mnt_want_write(h_mnt);
 		if (!err) {
 			err = au_whtmp_rmdir(a->dir, bindex, a->wh_dentry,
 					     &a->whlist);
-			mnt_drop_write(a->br->br_mnt);
+			mnt_drop_write(h_mnt);
 		}
 	}
 	au_hn_imtx_unlock(hdir);
@@ -1053,10 +1041,10 @@ void au_whtmp_kick_rmdir(struct inode *dir, aufs_bindex_t bindex,
 	args->br = au_sbr(sb, bindex);
 	atomic_inc(&args->br->br_count);
 	args->wh_dentry = dget(wh_dentry);
-	wkq_err = au_wkq_nowait(call_rmdir_whtmp, args, sb);
+	wkq_err = au_wkq_nowait(call_rmdir_whtmp, args, sb, /*flags*/0);
 	if (unlikely(wkq_err)) {
-		pr_warning("rmdir error %.*s (%d), ignored\n",
-			   AuDLNPair(wh_dentry), wkq_err);
+		pr_warn("rmdir error %.*s (%d), ignored\n",
+			AuDLNPair(wh_dentry), wkq_err);
 		au_whtmp_rmdir_free(args);
 	}
 }
