@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2011 Junjiro R. Okajima
+ * Copyright (C) 2005-2013 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,7 +20,6 @@
  * file private data
  */
 
-#include <linux/file.h>
 #include "aufs.h"
 
 void au_hfput(struct au_hfile *hf, struct file *file)
@@ -140,6 +139,11 @@ int au_finfo_init(struct file *file, struct au_fidir *fidir)
 
 	err = 0;
 	au_nfiles_inc(dentry->d_sb);
+	/* verbose coding for lock class name */
+	if (!fidir)
+		au_rw_class(&finfo->fi_rwsem, au_lc_key + AuLcNonDir_FIINFO);
+	else
+		au_rw_class(&finfo->fi_rwsem, au_lc_key + AuLcDir_FIINFO);
 	au_rw_write_lock(&finfo->fi_rwsem);
 	finfo->fi_btop = -1;
 	finfo->fi_hdir = fidir;

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2011 Junjiro R. Okajima
+ * Copyright (C) 2005-2013 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,37 +26,37 @@
 #ifdef __KERNEL__
 
 #include <asm/system.h>
-#include <linux/bug.h>
-/* #include <linux/err.h> */
-#include <linux/init.h>
+#include <linux/atomic.h>
 #include <linux/module.h>
 #include <linux/kallsyms.h>
-/* #include <linux/kernel.h> */
-#include <linux/delay.h>
-/* #include <linux/kd.h> */
 #include <linux/sysrq.h>
-#include <linux/aufs_type.h>
 
 #ifdef CONFIG_AUFS_DEBUG
 #define AuDebugOn(a)		BUG_ON(a)
 
 /* module parameter */
-extern int aufs_debug;
-static inline void au_debug(int n)
+extern atomic_t aufs_debug;
+static inline void au_debug_on(void)
 {
-	aufs_debug = n;
-	smp_mb();
+	atomic_inc(&aufs_debug);
+}
+static inline void au_debug_off(void)
+{
+	atomic_dec_if_positive(&aufs_debug);
 }
 
 static inline int au_debug_test(void)
 {
-	return aufs_debug;
+	return atomic_read(&aufs_debug) > 0;
 }
 #else
 #define AuDebugOn(a)		do {} while (0)
-AuStubVoid(au_debug, int n)
+AuStubVoid(au_debug_on, void)
+AuStubVoid(au_debug_off, void)
 AuStubInt0(au_debug_test, void)
 #endif /* CONFIG_AUFS_DEBUG */
+
+#define param_check_atomic_t(name, p) __param_check(name, p, atomic_t)
 
 /* ---------------------------------------------------------------------- */
 
@@ -71,7 +71,7 @@ AuStubInt0(au_debug_test, void)
 #define AuWarn1(fmt, ...) do { \
 	static unsigned char _c; \
 	if (!_c++) \
-		pr_warning(fmt, ##__VA_ARGS__); \
+		pr_warn(fmt, ##__VA_ARGS__); \
 } while (0)
 
 #define AuErr1(fmt, ...) do { \

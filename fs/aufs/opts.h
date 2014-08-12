@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2011 Junjiro R. Okajima
+ * Copyright (C) 2005-2013 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,7 +26,6 @@
 #ifdef __KERNEL__
 
 #include <linux/path.h>
-#include <linux/aufs_type.h>
 
 struct file;
 struct super_block;
@@ -103,6 +102,8 @@ enum {
 	AuWbrCreate_MFSRRV,	/* mfs then rr with seconds */
 	AuWbrCreate_PMFS,	/* parent and mfs */
 	AuWbrCreate_PMFSV,	/* parent and mfs with seconds */
+	AuWbrCreate_PMFSRR,	/* parent, mfs and round-robin */
+	AuWbrCreate_PMFSRRV,	/* plus seconds */
 
 	AuWbrCreate_Def = AuWbrCreate_TDP
 };
@@ -190,7 +191,7 @@ struct au_opts {
 
 /* ---------------------------------------------------------------------- */
 
-const char *au_optstr_br_perm(int brperm);
+char *au_optstr_br_perm(int brperm);
 const char *au_optstr_udba(int udba);
 const char *au_optstr_wbr_copyup(int wbr_copyup);
 const char *au_optstr_wbr_create(int wbr_create);

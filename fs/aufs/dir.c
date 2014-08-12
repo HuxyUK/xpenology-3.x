@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2011 Junjiro R. Okajima
+ * Copyright (C) 2005-2013 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,26 +20,35 @@
  * directory operations
  */
 
-#include <linux/file.h>
 #include <linux/fs_stack.h>
 #include "aufs.h"
 
 void au_add_nlink(struct inode *dir, struct inode *h_dir)
 {
+	unsigned int nlink;
+
 	AuDebugOn(!S_ISDIR(dir->i_mode) || !S_ISDIR(h_dir->i_mode));
 
-	dir->i_nlink += h_dir->i_nlink - 2;
+	nlink = dir->i_nlink;
+	nlink += h_dir->i_nlink - 2;
 	if (h_dir->i_nlink < 2)
-		dir->i_nlink += 2;
+		nlink += 2;
+	smp_mb();
+	set_nlink(dir, nlink);
 }
 
 void au_sub_nlink(struct inode *dir, struct inode *h_dir)
 {
+	unsigned int nlink;
+
 	AuDebugOn(!S_ISDIR(dir->i_mode) || !S_ISDIR(h_dir->i_mode));
 
-	dir->i_nlink -= h_dir->i_nlink - 2;
+	nlink = dir->i_nlink;
+	nlink -= h_dir->i_nlink - 2;
 	if (h_dir->i_nlink < 2)
-		dir->i_nlink -= 2;
+		nlink -= 2;
+	smp_mb();
+	set_nlink(dir, nlink);
 }
 
 loff_t au_dir_size(struct file *file, struct dentry *dentry)
@@ -277,31 +286,15 @@ static int au_do_fsync_dir_no_file(struct dentry *dentry, int datasync)
 	bend = au_dbend(dentry);
 	for (bindex = au_dbstart(dentry); !err && bindex <= bend; bindex++) {
 		struct path h_path;
-		struct inode *h_inode;
 
 		if (au_test_ro(sb, bindex, inode))
 			continue;
 		h_path.dentry = au_h_dptr(dentry, bindex);
 		if (!h_path.dentry)
 			continue;
-		h_inode = h_path.dentry->d_inode;
-		if (!h_inode)
-			continue;
 
-		/* no mnt_want_write() */
-		/* cf. fs/nsfd/vfs.c and fs/nfsd/nfs4recover.c */
-		/* todo: inotiry fired? */
 		h_path.mnt = au_sbr_mnt(sb, bindex);
-		mutex_lock(&h_inode->i_mutex);
-		err = filemap_fdatawrite(h_inode->i_mapping);
-		AuDebugOn(!h_inode->i_fop);
-		if (!err && h_inode->i_fop->fsync)
-			err = h_inode->i_fop->fsync(NULL, datasync);
-		if (!err)
-			err = filemap_fdatawrite(h_inode->i_mapping);
-		if (!err)
-			vfsub_update_h_iattr(&h_path, /*did*/NULL); /*ignore*/
-		mutex_unlock(&h_inode->i_mutex);
+		err = vfsub_fsync(NULL, &h_path, datasync);
 	}
 
 	return err;
@@ -314,7 +307,6 @@ static int au_do_fsync_dir(struct file *file, int datasync)
 	struct file *h_file;
 	struct super_block *sb;
 	struct inode *inode;
-	struct mutex *h_mtx;
 
 	err = au_reval_and_lock_fdi(file, reopen_dir, /*wlock*/1);
 	if (unlikely(err))
@@ -328,14 +320,7 @@ static int au_do_fsync_dir(struct file *file, int datasync)
 		if (!h_file || au_test_ro(sb, bindex, inode))
 			continue;
 
-		err = vfs_fsync(h_file, datasync);
-		if (!err) {
-			h_mtx = &h_file->f_dentry->d_inode->i_mutex;
-			mutex_lock(h_mtx);
-			vfsub_update_h_iattr(&h_file->f_path, /*did*/NULL);
-			/*ignore*/
-			mutex_unlock(h_mtx);
-		}
+		err = vfsub_fsync(h_file, &h_file->f_path, datasync);
 	}
 
 out:
@@ -345,16 +330,18 @@ out:
 /*
  * @file may be NULL
  */
-static int aufs_fsync_dir(struct file *file, int datasync)
+static int aufs_fsync_dir(struct file *file, loff_t start, loff_t end,
+			  int datasync)
 {
 	int err;
 	struct dentry *dentry;
 	struct super_block *sb;
-
-	dentry = file->f_dentry;
-	IMustLock(dentry->d_inode);
+	struct mutex *mtx;
 
 	err = 0;
+	dentry = file->f_dentry;
+	mtx = &dentry->d_inode->i_mutex;
+	mutex_lock(mtx);
 	sb = dentry->d_sb;
 	si_noflush_read_lock(sb);
 	if (file)
@@ -369,6 +356,7 @@ static int aufs_fsync_dir(struct file *file, int datasync)
 		fi_write_unlock(file);
 
 	si_read_unlock(sb);
+	mutex_unlock(mtx);
 	return err;
 }
 
@@ -378,7 +366,7 @@ static int aufs_readdir(struct file *file, void *dirent, filldir_t filldir)
 {
 	int err;
 	struct dentry *dentry;
-	struct inode *inode;
+	struct inode *inode, *h_inode;
 	struct super_block *sb;
 
 	dentry = file->f_dentry;
@@ -397,22 +385,22 @@ static int aufs_readdir(struct file *file, void *dirent, filldir_t filldir)
 	if (unlikely(err))
 		goto out_unlock;
 
+	h_inode = au_h_iptr(inode, au_ibstart(inode));
 	if (!au_test_nfsd()) {
 		err = au_vdir_fill_de(file, dirent, filldir);
-		fsstack_copy_attr_atime(inode,
-					au_h_iptr(inode, au_ibstart(inode)));
+		fsstack_copy_attr_atime(inode, h_inode);
 	} else {
 		/*
 		 * nfsd filldir may call lookup_one_len(), vfs_getattr(),
 		 * encode_fh() and others.
 		 */
-		struct inode *h_inode = au_h_iptr(inode, au_ibstart(inode));
-
+		atomic_inc(&h_inode->i_count);
 		di_read_unlock(dentry, AuLock_IR);
 		si_read_unlock(sb);
 		err = au_vdir_fill_de(file, dirent, filldir);
 		fsstack_copy_attr_atime(inode, h_inode);
 		fi_write_unlock(file);
+		iput(h_inode);
 
 		AuTraceErr(err);
 		return err;
@@ -537,6 +525,7 @@ static int sio_test_empty(struct dentry *dentry, struct test_empty_arg *arg)
 
 	h_dentry = au_h_dptr(dentry, arg->bindex);
 	h_inode = h_dentry->d_inode;
+	/* todo: i_mode changes anytime? */
 	mutex_lock_nested(&h_inode->i_mutex, AuLsc_I_CHILD);
 	err = au_test_h_perm_sio(h_inode, MAY_EXEC | MAY_READ);
 	mutex_unlock(&h_inode->i_mutex);

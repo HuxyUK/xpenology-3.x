@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2011 Junjiro R. Okajima
+ * Copyright (C) 2005-2013 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -65,8 +65,9 @@ static void au_cache_fin(void)
 {
 	int i;
 
-	/* including AuCache_HNOTIFY */
-	for (i = 0; i < AuCache_Last; i++)
+	/* excluding AuCache_HNOTIFY */
+	BUILD_BUG_ON(AuCache_HNOTIFY + 1 != AuCache_Last);
+	for (i = 0; i < AuCache_HNOTIFY; i++)
 		if (au_cachep[i]) {
 			kmem_cache_destroy(au_cachep[i]);
 			au_cachep[i] = NULL;
@@ -78,8 +79,14 @@ static void au_cache_fin(void)
 int au_dir_roflags;
 
 #ifdef CONFIG_AUFS_SBILIST
+/*
+ * iterate_supers_type() doesn't protect us from
+ * remounting (branch management)
+ */
 struct au_splhead au_sbilist;
 #endif
+
+struct lock_class_key au_lc_key[AuLcKey_Last];
 
 /*
  * functions for module interface.
@@ -134,9 +141,12 @@ static int __init aufs_init(void)
 	err = au_wkq_init();
 	if (unlikely(err))
 		goto out_procfs;
-	err = au_hnotify_init();
+	err = au_loopback_init();
 	if (unlikely(err))
 		goto out_wkq;
+	err = au_hnotify_init();
+	if (unlikely(err))
+		goto out_loopback;
 	err = au_sysrq_init();
 	if (unlikely(err))
 		goto out_hin;
@@ -156,6 +166,8 @@ out_sysrq:
 	au_sysrq_fin();
 out_hin:
 	au_hnotify_fin();
+out_loopback:
+	au_loopback_fin();
 out_wkq:
 	au_wkq_fin();
 out_procfs:
@@ -173,6 +185,7 @@ static void __exit aufs_exit(void)
 	au_cache_fin();
 	au_sysrq_fin();
 	au_hnotify_fin();
+	au_loopback_fin();
 	au_wkq_fin();
 	au_procfs_fin();
 	sysaufs_fin();

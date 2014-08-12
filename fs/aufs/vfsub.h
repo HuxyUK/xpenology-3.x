@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2011 Junjiro R. Okajima
+ * Copyright (C) 2005-2013 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -178,6 +178,7 @@ long vfsub_splice_from(struct pipe_inode_info *pipe, struct file *out,
 		       loff_t *ppos, size_t len, unsigned int flags);
 int vfsub_trunc(struct path *h_path, loff_t length, unsigned int attr,
 		struct file *h_file);
+int vfsub_fsync(struct file *file, struct path *path, int datasync);
 
 /* ---------------------------------------------------------------------- */
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2011 Junjiro R. Okajima
+ * Copyright (C) 2005-2013 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,7 +26,6 @@
 #ifdef __KERNEL__
 
 #include <linux/fs.h>
-#include <linux/aufs_type.h>
 #include "rwsem.h"
 #include "spl.h"
 #include "wkq.h"
@@ -40,8 +39,15 @@ struct au_wbr_copyup_operations {
 	int (*copyup)(struct dentry *dentry);
 };
 
+#define AuWbr_DIR	1		/* target is a dir */
+#define AuWbr_PARENT	(1 << 1)	/* always require a parent */
+
+#define au_ftest_wbr(flags, name)	((flags) & AuWbr_##name)
+#define au_fset_wbr(flags, name)	{ (flags) |= AuWbr_##name; }
+#define au_fclr_wbr(flags, name)	{ (flags) &= ~AuWbr_##name; }
+
 struct au_wbr_create_operations {
-	int (*create)(struct dentry *dentry, int isdir);
+	int (*create)(struct dentry *dentry, unsigned int flags);
 	int (*init)(struct super_block *sb);
 	int (*fin)(struct super_block *sb);
 };
@@ -55,6 +61,20 @@ struct au_wbr_mfs {
 	unsigned long long	mfsrr_bytes;
 	unsigned long long	mfsrr_watermark;
 };
+
+struct pseudo_link {
+	union {
+		struct hlist_node hlist;
+		struct rcu_head rcu;
+	};
+	struct inode *inode;
+};
+
+#define AuPlink_NHASH 100
+static inline int au_plink_hash(ino_t ino)
+{
+	return ino % AuPlink_NHASH;
+}
 
 struct au_branch;
 struct au_sbinfo {
@@ -117,6 +137,8 @@ struct au_sbinfo {
 	unsigned long		si_xib_last_pindex;
 	int			si_xib_next_bit;
 	aufs_bindex_t		si_xino_brid;
+	unsigned long		si_xino_jiffy;
+	unsigned long		si_xino_expire;
 	/* reserved for future use */
 	/* unsigned long long	si_xib_limit; */	/* Max xib file size */
 
@@ -146,7 +168,7 @@ struct au_sbinfo {
 	/* int			si_rendir; */
 
 	/* pseudo_link list */
-	struct au_splhead	si_plink;
+	struct au_sphlhead	si_plink[AuPlink_NHASH];
 	wait_queue_head_t	si_plink_wq;
 	spinlock_t		si_plink_maint_lock;
 	pid_t			si_plink_maint_pid;
@@ -159,7 +181,9 @@ struct au_sbinfo {
 	 */
 	struct kobject		si_kobj;
 #ifdef CONFIG_DEBUG_FS
-	struct dentry		 *si_dbgaufs, *si_dbgaufs_xib;
+	struct dentry		 *si_dbgaufs;
+	struct dentry		 *si_dbgaufs_plink;
+	struct dentry		 *si_dbgaufs_xib;
 #ifdef CONFIG_AUFS_EXPORT
 	struct dentry		 *si_dbgaufs_xigen;
 #endif
@@ -267,16 +291,8 @@ static inline struct au_sbinfo *au_sbi(struct super_block *sb)
 /* ---------------------------------------------------------------------- */
 
 #ifdef CONFIG_AUFS_EXPORT
+int au_test_nfsd(void);
 void au_export_init(struct super_block *sb);
-
-static inline int au_test_nfsd(void)
-{
-	struct task_struct *tsk = current;
-
-	return (tsk->flags & PF_KTHREAD)
-		&& !strcmp(tsk->comm, "nfsd");
-}
-
 void au_xigen_inc(struct inode *inode);
 int au_xigen_new(struct inode *inode);
 int au_xigen_set(struct super_block *sb, struct file *base);
@@ -289,8 +305,8 @@ static inline int au_busy_or_stale(void)
 	return -ESTALE;
 }
 #else
-AuStubVoid(au_export_init, struct super_block *sb)
 AuStubInt0(au_test_nfsd, void)
+AuStubVoid(au_export_init, struct super_block *sb)
 AuStubVoid(au_xigen_inc, struct inode *inode)
 AuStubInt0(au_xigen_new, struct inode *inode)
 AuStubInt0(au_xigen_set, struct super_block *sb, struct file *base)
@@ -321,10 +337,30 @@ static inline void au_sbilist_del(struct super_block *sb)
 {
 	au_spl_del(&au_sbi(sb)->si_list, &au_sbilist);
 }
+
+#ifdef CONFIG_AUFS_MAGIC_SYSRQ
+static inline void au_sbilist_lock(void)
+{
+	spin_lock(&au_sbilist.spin);
+}
+
+static inline void au_sbilist_unlock(void)
+{
+	spin_unlock(&au_sbilist.spin);
+}
+#define AuGFP_SBILIST	GFP_ATOMIC
+#else
+AuStubVoid(au_sbilist_lock, void)
+AuStubVoid(au_sbilist_unlock, void)
+#define AuGFP_SBILIST	GFP_NOFS
+#endif /* CONFIG_AUFS_MAGIC_SYSRQ */
 #else
 AuStubVoid(au_sbilist_init, void)
 AuStubVoid(au_sbilist_add, struct super_block*)
 AuStubVoid(au_sbilist_del, struct super_block*)
+AuStubVoid(au_sbilist_lock, void)
+AuStubVoid(au_sbilist_unlock, void)
+#define AuGFP_SBILIST	GFP_NOFS
 #endif
 
 /* ---------------------------------------------------------------------- */
@@ -338,6 +374,7 @@ static inline void dbgaufs_si_null(struct au_sbinfo *sbinfo)
 	/* AuRwMustWriteLock(&sbinfo->si_rwsem); */
 #ifdef CONFIG_DEBUG_FS
 	sbinfo->si_dbgaufs = NULL;
+	sbinfo->si_dbgaufs_plink = NULL;
 	sbinfo->si_dbgaufs_xib = NULL;
 #ifdef CONFIG_AUFS_EXPORT
 	sbinfo->si_dbgaufs_xigen = NULL;

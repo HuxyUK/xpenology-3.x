@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2011 Junjiro R. Okajima
+ * Copyright (C) 2005-2013 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,8 +20,6 @@
  * mount options/flags
  */
 
-#include <linux/file.h>
-#include <linux/jiffies.h>
 #include <linux/namei.h>
 #include <linux/types.h> /* a distribution requires */
 #include <linux/parser.h>
@@ -181,31 +179,147 @@ static const char *au_parser_pattern(int val, struct match_token *token)
 
 /* ---------------------------------------------------------------------- */
 
-static match_table_t brperms = {
+static match_table_t brperm = {
 	{AuBrPerm_RO, AUFS_BRPERM_RO},
 	{AuBrPerm_RR, AUFS_BRPERM_RR},
 	{AuBrPerm_RW, AUFS_BRPERM_RW},
-
-	{AuBrPerm_ROWH, AUFS_BRPERM_ROWH},
-	{AuBrPerm_RRWH, AUFS_BRPERM_RRWH},
-	{AuBrPerm_RWNoLinkWH, AUFS_BRPERM_RWNLWH},
-
-	{AuBrPerm_ROWH, "nfsro"},
-	{AuBrPerm_RO, NULL}
+	{0, NULL}
 };
+
+static match_table_t brattr = {
+	{AuBrAttr_UNPIN, AUFS_BRATTR_UNPIN},
+	{AuBrRAttr_WH, AUFS_BRRATTR_WH},
+	{AuBrWAttr_NoLinkWH, AUFS_BRWATTR_NLWH},
+	{0, NULL}
+};
+
+#define AuBrStr_LONGEST	AUFS_BRPERM_RW \
+	"+" AUFS_BRATTR_UNPIN \
+	"+" AUFS_BRWATTR_NLWH
+
+static int br_attr_val(char *str, match_table_t table, substring_t args[])
+{
+	int attr, v;
+	char *p;
+
+	attr = 0;
+	do {
+		p = strchr(str, '+');
+		if (p)
+			*p = 0;
+		v = match_token(str, table, args);
+		if (v)
+			attr |= v;
+		else {
+			if (p)
+				*p = '+';
+			pr_warn("ignored branch attribute %s\n", str);
+			break;
+		}
+		if (p)
+			str = p + 1;
+	} while (p);
+
+	return attr;
+}
 
 static int noinline_for_stack br_perm_val(char *perm)
 {
 	int val;
+	char *p, *q;
 	substring_t args[MAX_OPT_ARGS];
 
-	val = match_token(perm, brperms, args);
+	p = strchr(perm, '+');
+	if (p)
+		*p = 0;
+	val = match_token(perm, brperm, args);
+	if (!val) {
+		if (p)
+			*p = '+';
+		pr_warn("ignored branch permission %s\n", perm);
+		val = AuBrPerm_RO;
+		goto out;
+	}
+	if (!p)
+		goto out;
+
+	p++;
+	while (1) {
+		q = strchr(p, '+');
+		if (q)
+			*q = 0;
+		val |= br_attr_val(p, brattr, args);
+		if (q) {
+			*q = '+';
+			p = q + 1;
+		} else
+			break;
+	}
+	switch (val & AuBrPerm_Mask) {
+	case AuBrPerm_RO:
+	case AuBrPerm_RR:
+		if (unlikely(val & AuBrWAttr_NoLinkWH)) {
+			pr_warn("ignored branch attribute %s\n",
+				AUFS_BRWATTR_NLWH);
+			val &= ~AuBrWAttr_NoLinkWH;
+		}
+		break;
+	case AuBrPerm_RW:
+		if (unlikely(val & AuBrRAttr_WH)) {
+			pr_warn("ignored branch attribute %s\n",
+				AUFS_BRRATTR_WH);
+			val &= ~AuBrRAttr_WH;
+		}
+		break;
+	}
+
+out:
 	return val;
 }
 
-const char *au_optstr_br_perm(int brperm)
+/* Caller should free the return value */
+char *au_optstr_br_perm(int brperm)
 {
-	return au_parser_pattern(brperm, (void *)brperms);
+	char *p, a[sizeof(AuBrStr_LONGEST)];
+	int sz;
+
+#define SetPerm(str) do {			\
+		sz = sizeof(str);		\
+		memcpy(a, str, sz);		\
+		p = a + sz - 1;			\
+	} while (0)
+
+#define AppendAttr(flag, str) do {			\
+		if (brperm & flag) {		\
+			sz = sizeof(str);	\
+			*p++ = '+';		\
+			memcpy(p, str, sz);	\
+			p += sz - 1;		\
+		}				\
+	} while (0)
+
+	switch (brperm & AuBrPerm_Mask) {
+	case AuBrPerm_RO:
+		SetPerm(AUFS_BRPERM_RO);
+		break;
+	case AuBrPerm_RR:
+		SetPerm(AUFS_BRPERM_RR);
+		break;
+	case AuBrPerm_RW:
+		SetPerm(AUFS_BRPERM_RW);
+		break;
+	default:
+		AuDebugOn(1);
+	}
+
+	AppendAttr(AuBrAttr_UNPIN, AUFS_BRATTR_UNPIN);
+	AppendAttr(AuBrRAttr_WH, AUFS_BRRATTR_WH);
+	AppendAttr(AuBrWAttr_NoLinkWH, AUFS_BRWATTR_NLWH);
+
+	AuDebugOn(strlen(a) >= sizeof(a));
+	return kstrdup(a, GFP_NOFS);
+#undef SetPerm
+#undef AppendAttr
 }
 
 /* ---------------------------------------------------------------------- */
@@ -250,6 +364,8 @@ static match_table_t au_wbr_create_policy = {
 	{AuWbrCreate_MFSRRV, "mfsrr:%d:%d"},
 	{AuWbrCreate_PMFS, "pmfs"},
 	{AuWbrCreate_PMFSV, "pmfs:%d"},
+	{AuWbrCreate_PMFSRR, "pmfsrr:%d"},
+	{AuWbrCreate_PMFSRRV, "pmfsrr:%d:%d"},
 
 	{-1, NULL}
 };
@@ -257,7 +373,7 @@ static match_table_t au_wbr_create_policy = {
 /*
  * cf. linux/lib/parser.c and cmdline.c
  * gave up calling memparse() since it uses simple_strtoull() instead of
- * strict_...().
+ * kstrto...().
  */
 static int noinline_for_stack
 au_match_ull(substring_t *s, unsigned long long *result)
@@ -271,7 +387,7 @@ au_match_ull(substring_t *s, unsigned long long *result)
 	if (len + 1 <= sizeof(a)) {
 		memcpy(a, s->from, len);
 		a[len] = '\0';
-		err = strict_strtoull(a, 0, result);
+		err = kstrtoull(a, 0, result);
 	}
 	return err;
 }
@@ -319,6 +435,7 @@ au_wbr_create_val(char *str, struct au_opt_wbr_create *create)
 	create->wbr_create = err;
 	switch (err) {
 	case AuWbrCreate_MFSRRV:
+	case AuWbrCreate_PMFSRRV:
 		e = au_wbr_mfs_wmark(&args[0], str, create);
 		if (!e)
 			e = au_wbr_mfs_sec(&args[1], str, create);
@@ -326,6 +443,7 @@ au_wbr_create_val(char *str, struct au_opt_wbr_create *create)
 			err = e;
 		break;
 	case AuWbrCreate_MFSRR:
+	case AuWbrCreate_PMFSRR:
 		e = au_wbr_mfs_wmark(&args[0], str, create);
 		if (unlikely(e)) {
 			err = e;
@@ -542,6 +660,7 @@ static void dump_opts(struct au_opts *opts)
 					  u.create->mfsrr_watermark);
 				break;
 			case AuWbrCreate_MFSRRV:
+			case AuWbrCreate_PMFSRRV:
 				AuDbg("%llu watermark, %d sec\n",
 					  u.create->mfsrr_watermark,
 					  u.create->mfs_second);
@@ -596,7 +715,7 @@ static int opt_add(struct au_opt *opt, char *opt_str, unsigned long sb_flags,
 	char *p;
 
 	add->bindex = bindex;
-	add->perm = AuBrPerm_Last;
+	add->perm = AuBrPerm_RO;
 	add->pathname = opt_str;
 	p = strchr(opt_str, '=');
 	if (p) {
@@ -1029,7 +1148,7 @@ int au_opts_parse(struct super_block *sb, char *str, struct au_opts *opts)
 			break;
 
 		case Opt_ignore:
-			pr_warning("ignored %s\n", opt_str);
+			pr_warn("ignored %s\n", opt_str);
 			/*FALLTHROUGH*/
 		case Opt_ignore_silent:
 			skipped = 1;
@@ -1081,6 +1200,8 @@ static int au_opt_wbr_create(struct super_block *sb,
 	switch (create->wbr_create) {
 	case AuWbrCreate_MFSRRV:
 	case AuWbrCreate_MFSRR:
+	case AuWbrCreate_PMFSRR:
+	case AuWbrCreate_PMFSRRV:
 		sbinfo->si_wbr_mfs.mfsrr_watermark = create->mfsrr_watermark;
 		/*FALLTHROUGH*/
 	case AuWbrCreate_MFS:
@@ -1365,14 +1486,14 @@ int au_opts_verify(struct super_block *sb, unsigned long sb_flags,
 
 	if (!(sb_flags & MS_RDONLY)) {
 		if (unlikely(!au_br_writable(au_sbr_perm(sb, 0))))
-			pr_warning("first branch should be rw\n");
+			pr_warn("first branch should be rw\n");
 		if (unlikely(au_opt_test(sbinfo->si_mntflags, SHWH)))
-			pr_warning("shwh should be used with ro\n");
+			pr_warn("shwh should be used with ro\n");
 	}
 
 	if (au_opt_test((sbinfo->si_mntflags | pending), UDBA_HNOTIFY)
 	    && !au_opt_test(sbinfo->si_mntflags, XINO))
-		pr_warning("udba=*notify requires xino\n");
+		pr_warn("udba=*notify requires xino\n");
 
 	err = 0;
 	root = sb->s_root;
@@ -1389,19 +1510,13 @@ int au_opts_verify(struct super_block *sb, unsigned long sb_flags,
 		if (wbr)
 			wbr_wh_read_lock(wbr);
 
-		switch (br->br_perm) {
-		case AuBrPerm_RO:
-		case AuBrPerm_ROWH:
-		case AuBrPerm_RR:
-		case AuBrPerm_RRWH:
+		if (!au_br_writable(br->br_perm)) {
 			do_free = !!wbr;
 			skip = (!wbr
 				|| (!wbr->wbr_whbase
 				    && !wbr->wbr_plink
 				    && !wbr->wbr_orph));
-			break;
-
-		case AuBrPerm_RWNoLinkWH:
+		} else if (!au_br_wh_linkable(br->br_perm)) {
 			/* skip = (!br->br_whbase && !br->br_orph); */
 			skip = (!wbr || !wbr->wbr_whbase);
 			if (skip && wbr) {
@@ -1410,9 +1525,7 @@ int au_opts_verify(struct super_block *sb, unsigned long sb_flags,
 				else
 					skip = !wbr->wbr_plink;
 			}
-			break;
-
-		case AuBrPerm_RW:
+		} else {
 			/* skip = (br->br_whbase && br->br_ohph); */
 			skip = (wbr && wbr->wbr_whbase);
 			if (skip) {
@@ -1421,10 +1534,6 @@ int au_opts_verify(struct super_block *sb, unsigned long sb_flags,
 				else
 					skip = !wbr->wbr_plink;
 			}
-			break;
-
-		default:
-			BUG();
 		}
 		if (wbr)
 			wbr_wh_read_unlock(wbr);
@@ -1436,7 +1545,7 @@ int au_opts_verify(struct super_block *sb, unsigned long sb_flags,
 		au_hn_imtx_lock_nested(hdir, AuLsc_I_PARENT);
 		if (wbr)
 			wbr_wh_write_lock(wbr);
-		err = au_wh_init(au_h_dptr(root, bindex), br, sb);
+		err = au_wh_init(br, sb);
 		if (wbr)
 			wbr_wh_write_unlock(wbr);
 		au_hn_imtx_unlock(hdir);

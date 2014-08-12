@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2011 Junjiro R. Okajima
+ * Copyright (C) 2010-2013 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -56,6 +56,7 @@ static int au_procfs_plm_write_si(struct file *file, unsigned long id)
 		goto out;
 
 	sb = NULL;
+	/* don't use au_sbilist_lock() here */
 	spin_lock(&au_sbilist.spin);
 	list_for_each_entry(sbinfo, &au_sbilist.head, si_list)
 		if (id == sysaufs_si_id(sbinfo)) {
@@ -113,7 +114,7 @@ static ssize_t au_procfs_plm_write(struct file *file, const char __user *ubuf,
 	} else if (unlikely(strncmp("si=", buf, 3)))
 		goto out;
 
-	err = strict_strtoul(buf + 3, 16, &id);
+	err = kstrtoul(buf + 3, 16, &id);
 	if (unlikely(err))
 		goto out;
 

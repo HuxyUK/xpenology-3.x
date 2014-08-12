@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2011 Junjiro R. Okajima
+ * Copyright (C) 2005-2013 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -37,6 +37,22 @@ extern int sysaufs_brs;
 
 extern int au_dir_roflags;
 
+enum {
+	AuLcNonDir_FIINFO,
+	AuLcNonDir_DIINFO,
+	AuLcNonDir_IIINFO,
+
+	AuLcDir_FIINFO,
+	AuLcDir_DIINFO,
+	AuLcDir_IIINFO,
+
+	AuLcSymlink_DIINFO,
+	AuLcSymlink_IIINFO,
+
+	AuLcKey_Last
+};
+extern struct lock_class_key au_lc_key[AuLcKey_Last];
+
 void *au_kzrealloc(void *p, unsigned int nused, unsigned int new_sz, gfp_t gfp);
 int au_seq_path(struct seq_file *seq, struct path *path);
 
@@ -58,9 +74,7 @@ enum {
 	AuCache_FINFO,
 	AuCache_VDIR,
 	AuCache_DEHSTR,
-#ifdef CONFIG_AUFS_HNOTIFY
-	AuCache_HNOTIFY,
-#endif
+	AuCache_HNOTIFY, /* must be last */
 	AuCache_Last
 };
 
