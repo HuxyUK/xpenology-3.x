@@ -109,6 +109,10 @@ int gSynoPid;
 extern int gSynoHasDynModule;
 #endif
 
+#ifdef XPENOLOGY
+extern int g_xen_vbd_devices;
+#endif
+
 #ifdef CONFIG_SYNO_DUAL_HEAD
 extern int gSynoDualHead;
 #endif
@@ -3197,7 +3201,6 @@ static int sd_probe(struct device *dev)
 				goto out_put;
 			}
 			break;
-
 		default:
 			printk( KERN_DEBUG "%s: ida_pre_get for default device", __FUNCTION__ );
 			if ( !ida_pre_get( &sd_index_ida, GFP_KERNEL ) )
@@ -3238,7 +3241,7 @@ static int sd_probe(struct device *dev)
 
 		case SYNO_DISK_SAS:
 			// SAS model use different naming scheme
-			want_idx = 0;
+			want_idx = g_xen_vbd_devices;
 			error = syno_ida_get_new( &sas_index_ida, want_idx, &index );
 			break;
 
@@ -3253,7 +3256,7 @@ static int sd_probe(struct device *dev)
 			{
 				want_idx = sdp->host->host_no;
 			}
-			error = syno_ida_get_new( &sd_index_ida, want_idx, &index );
+			error = syno_ida_get_new( &sd_index_ida, want_idx + g_xen_vbd_devices, &index );
 			break;
 		}
 
