@@ -1496,15 +1496,15 @@ static int __init xlblk_init(void)
 	if (!xen_domain())
 		return -ENODEV;
 
-	if (register_blkdev(XENVBD_MAJOR, DEV_NAME)) {
+	if (register_blkdev(XENVBD_MAJOR, DEV_NAME_XEN)) {
 		printk(KERN_WARNING "xen_blk: can't get major %d with name %s\n",
-		       XENVBD_MAJOR, DEV_NAME);
+		       XENVBD_MAJOR, DEV_NAME_XEN);
 		return -ENODEV;
 	}
 
 	ret = xenbus_register_frontend(&blkfront);
 	if (ret) {
-		unregister_blkdev(XENVBD_MAJOR, DEV_NAME);
+		unregister_blkdev(XENVBD_MAJOR, DEV_NAME_XEN);
 		return ret;
 	}
 
