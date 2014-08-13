@@ -1200,6 +1200,8 @@ syno_trans_host_to_disk_show(struct device *dev, struct device_attribute *attr, 
 	iStartIdx = syno_libata_index_get(pShost, 0, 0, 0);
 
 	DeviceNameGet(iStartIdx, szTmp);
+        printk(KERN_DEBUG "%s: disk driver '%d, %s'", __FUNCTION__,
+                        iStartIdx, szTmp);
 
 	szTmp[SYNO_DISK_TRANS_LEN] = '\n';
 	szTmp[SYNO_DISK_TRANS_LEN + 1] = '\0';
