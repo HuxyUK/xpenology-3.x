@@ -2865,6 +2865,9 @@ EXPORT_SYMBOL(SynoUSBDeviceIsSATA);
  */
 static int sd_format_sas_disk_name(char *prefix, int synoindex, char *buf, int buflen)
 {
+	printk(KERN_DEBUG "%s: %s,%d", __FUNCTION__,
+               prefix, synoindex);
+
 	/* disk format is sata1, so synoindex  1 position in this string
 	 * So we at least need to prepare 1 position for this string
 	 */
@@ -3038,6 +3041,11 @@ static SYNO_DISK_TYPE syno_disk_type_get(struct device *dev)
 {
 	struct scsi_device *sdp = to_scsi_device(dev);
 
+#ifdef XPENOLOGY
+	printk(KERN_DEBUG "%s: disk driver '%s'", __FUNCTION__,
+			sdp->host->hostt->name);
+#endif
+
 	// iscsi
 #ifdef MY_ABC_HERE
 	if(strcmp(sdp->host->hostt->name, "iSCSI Initiator over TCP/IP") == 0){
@@ -3047,11 +3055,18 @@ static SYNO_DISK_TYPE syno_disk_type_get(struct device *dev)
 	if (SYNO_PORT_TYPE_USB == sdp->host->hostt->syno_port_type) {
 #ifdef MY_ABC_HERE
 		struct us_data *us = host_to_us(sdp->host);
+
 		//Since the UAS doesn't has the us_data structure , the us will be NULL , avoid the NULL pointer accessing
 		if (NULL == us) {
 			return SYNO_DISK_USB;
 		}
+
 		struct usb_device *usbdev = us->pusb_dev;
+		printk( KERN_DEBUG "%s: disk driver '%s' vendor '%X' pid '%X'", __FUNCTION__,
+				sdp->host->hostt->name,
+				usbdev->descriptor.idVendor,
+				usbdev->descriptor.idProduct );
+
 		if (NULL == usbdev) {
 			return SYNO_DISK_USB;
 		}
@@ -3074,12 +3089,19 @@ static SYNO_DISK_TYPE syno_disk_type_get(struct device *dev)
 		}
 #endif
 		// else treat as internal disks
+		printk(KERN_DEBUG "%s: SATA syno_port_type %x\n", __FUNCTION__, 
+				sdp->host->hostt->syno_port_type);
 		return SYNO_DISK_SATA;
 	}
 	// sas disks
 	if (SYNO_PORT_TYPE_SAS == sdp->host->hostt->syno_port_type) {
+		printk(KERN_DEBUG "%s: SAS syno_port_type %x", __FUNCTION__, 
+				sdp->host->hostt->syno_port_type);
 		return SYNO_DISK_SAS;
 	}
+#ifdef XPENOLOGY
+	printk(KERN_DEBUG "syno_disk_type_get: Got UNKNOWN port type %x\n", sdp->host->hostt->syno_port_type);
+#endif 
 	return SYNO_DISK_UNKNOWN;
 }
 #endif
@@ -3111,7 +3133,7 @@ static int sd_probe(struct device *dev)
 	int error;
 #ifdef	MY_ABC_HERE
 	struct ata_port *ap;
-	int start_index;
+	//int start_index;
 	int iRetry = 0;
 	u32 want_idx = 0;
 #endif
@@ -3138,33 +3160,53 @@ static int sd_probe(struct device *dev)
 
 #ifdef MY_ABC_HERE
 	sdkp->synodisktype = syno_disk_type_get(dev);
+        printk(KERN_DEBUG "%s: syno disk type %x", __FUNCTION__, sdkp->synodisktype);
+	printk(KERN_DEBUG "%s: is SAS model %x", __FUNCTION__, g_is_sas_model);
 #endif
 
-	do {
-		if (!ida_pre_get(&sd_index_ida, GFP_KERNEL))
-			goto out_put;
-
-#ifdef SYNO_SAS_DISK_NAME
-		if (1 == g_is_sas_model) {
-			switch(sdkp->synodisktype) {
 #ifdef MY_ABC_HERE
-				case SYNO_DISK_ISCSI:
-					if (!ida_pre_get(&iscsi_index_ida, GFP_KERNEL))
-						goto out_put;
-					break;
-#endif
-				case SYNO_DISK_USB:
-					if (!ida_pre_get(&usb_index_ida, GFP_KERNEL))
-						goto out_put;
-					break;
-				case SYNO_DISK_SAS:
-					if (!ida_pre_get(&sas_index_ida, GFP_KERNEL))
-						goto out_put;
-					break;
-				default:
-					break;
+	do
+	{
+		switch ( sdkp->synodisktype )
+		{
+
+		case SYNO_DISK_ISCSI:
+			printk( KERN_DEBUG "%s: ida_pre_get for iSCSI", __FUNCTION__ );
+			if ( !ida_pre_get( &iscsi_index_ida, GFP_KERNEL ) )
+			{
+				printk( KERN_DEBUG "%s: ida_pre_get failed, goto out_put", __FUNCTION__ );
+				goto out_put;
 			}
+			break;
+
+		case SYNO_DISK_SYNOBOOT:
+		case SYNO_DISK_USB:
+			printk( KERN_DEBUG "%s: ida_pre_get for USB", __FUNCTION__ );
+			if ( !ida_pre_get( &usb_index_ida, GFP_KERNEL ) )
+			{
+				printk( KERN_DEBUG "%s: ida_pre_get failed, goto out_put", __FUNCTION__ );
+				goto out_put;
+			}
+			break;
+
+		case SYNO_DISK_SAS:
+			printk( KERN_DEBUG "%s: ida_pre_get for SAS", __FUNCTION__ );
+			if ( !ida_pre_get( &sas_index_ida, GFP_KERNEL ) )
+			{
+				printk( KERN_DEBUG "%s: ida_pre_get failed, goto out_put", __FUNCTION__ );
+				goto out_put;
+			}
+			break;
+
+		default:
+			printk( KERN_DEBUG "%s: ida_pre_get for default device", __FUNCTION__ );
+			if ( !ida_pre_get( &sd_index_ida, GFP_KERNEL ) )
+				goto out_put;
+			break;
 		}
+#else
+	if ( !ida_pre_get( &sd_index_ida, GFP_KERNEL ) )
+		goto out_put;
 #endif
 
 #ifdef MY_ABC_HERE
@@ -3176,62 +3218,57 @@ static int sd_probe(struct device *dev)
 		spin_lock(&sd_index_lock);
 
 #ifdef MY_ABC_HERE
-		switch(sdkp->synodisktype) {
-#ifdef MY_ABC_HERE
-			case SYNO_DISK_ISCSI:
-#ifdef SYNO_SAS_DISK_NAME
-				if (1 == g_is_sas_model) {
-					error = syno_ida_get_new(&iscsi_index_ida, 0, &synoidx);
-					want_idx = 0;
-					break;
-				}
-#endif
-					want_idx = SYNO_ISCSI_DEVICE_INDEX;
-				break;
-#endif
-#ifdef MY_ABC_HERE
-			case SYNO_DISK_SYNOBOOT:
-				want_idx = SYNO_USB_FLASH_DEVICE_INDEX;
-				break;
-#endif
-			case SYNO_DISK_USB:
-#ifdef SYNO_SAS_DISK_NAME
-				if (1 == g_is_sas_model) {
-					error = syno_ida_get_new(&usb_index_ida, 0, &synoidx);
-					want_idx = 0;
-					break;
-				}
-#endif
-				want_idx = SYNO_MAX_INTERNAL_DISK + 1;
-				break;
-			case SYNO_DISK_SAS:
-			case SYNO_DISK_SATA:
-			default:
-				// SAS model use different naming scheme
-#ifdef SYNO_SAS_DISK_NAME
-				if (1 == g_is_sas_model) {
-					error = syno_ida_get_new(&sas_index_ida, 0, &synoidx);
-					want_idx = 0;
-					break;
-				}
-#endif
-				if (sdp->host->hostt->syno_index_get) {
-					want_idx = sdp->host->hostt->syno_index_get(sdp->host, sdp->channel, sdp->id, sdp->lun);
-				}else{
-					want_idx = sdp->host->host_no;
-				}
-				break;
+		printk(KERN_DEBUG "%s: switch on synodisktype %x\n", __FUNCTION__, sdkp->synodisktype);
+		switch ( sdkp->synodisktype )
+		{
+		case SYNO_DISK_ISCSI:
+			error = syno_ida_get_new( &iscsi_index_ida, 0, &index );
+			want_idx = SYNO_ISCSI_DEVICE_INDEX;
+			break;
+
+		case SYNO_DISK_SYNOBOOT:
+			want_idx = SYNO_USB_FLASH_DEVICE_INDEX;
+			error = syno_ida_get_new( &usb_index_ida, want_idx, &index );
+			break;
+
+		case SYNO_DISK_USB:
+			error = syno_ida_get_new( &usb_index_ida, 0, &index );
+			want_idx = SYNO_MAX_INTERNAL_DISK + 1;
+			break;
+
+		case SYNO_DISK_SAS:
+			// SAS model use different naming scheme
+			want_idx = 0;
+			error = syno_ida_get_new( &sas_index_ida, want_idx, &index );
+			break;
+
+		case SYNO_DISK_SATA:
+		default:
+
+			if ( sdp->host->hostt->syno_index_get )
+			{
+				want_idx = sdp->host->hostt->syno_index_get( sdp->host, sdp->channel, sdp->id, sdp->lun );
+			}
+			else
+			{
+				want_idx = sdp->host->host_no;
+			}
+			error = syno_ida_get_new( &sd_index_ida, want_idx, &index );
+			break;
 		}
 
-		error = syno_ida_get_new(&sd_index_ida, want_idx, &index);
+		printk( KERN_DEBUG "%s: want_idx for device is %d", __FUNCTION__, want_idx );
+		printk( KERN_DEBUG "%s: status of syno_ida_get_new is %d", __FUNCTION__, error );
+
 #ifdef SYNO_SAS_DISK_NAME
-		if (1 == g_is_sas_model) {
-			sdkp->synoindex = synoidx;
-		}
+ 		if (1 == g_is_sas_model) {
+ 			sdkp->synoindex = synoidx;
+ 		}
 #endif
-		// try at most 5 times
-		while (want_idx != index &&
-			(SYNO_DISK_SATA == sdkp->synodisktype) && iRetry < 15) {
+		// try at most 10 times
+		while ( want_idx != index &&
+				( SYNO_DISK_SATA == sdkp->synodisktype ) && iRetry < 10 )
+		{
 			/* Sometimes raid is not release all scsi disk yet. Try to delay and reget */
 			printk("want_idx %d index %d. delay and reget\n", want_idx, index);
 
@@ -3261,31 +3298,23 @@ static int sd_probe(struct device *dev)
 #ifdef MY_ABC_HERE
 	gd->systemDisk = 0;
 	switch(sdkp->synodisktype) {
-#ifdef MY_ABC_HERE
 		case SYNO_DISK_ISCSI:
-#ifdef SYNO_SAS_DISK_NAME
-			if (1 == g_is_sas_model) {
-				error = sd_format_sas_disk_name(SYNO_SAS_ISCSI_DEVICE_PREFIX, synoidx, gd->disk_name, DISK_NAME_LEN);
-				printk("got iSCSI disk[%d]\n", synoidx);
-				break;
-			}
-#endif
-			start_index = index - SYNO_ISCSI_DEVICE_INDEX;
-			error = sd_format_disk_name(SYNO_ISCSI_DEVICE_PREFIX, start_index, gd->disk_name, DISK_NAME_LEN);
-			printk("got iSCSI disk[%d]\n", start_index);
+			//start_index = index - SYNO_ISCSI_DEVICE_INDEX;
+			//error = sd_format_disk_name( SYNO_ISCSI_DEVICE_PREFIX, start_index, gd->disk_name, DISK_NAME_LEN );
+			error = sd_format_sas_disk_name( SYNO_SAS_ISCSI_DEVICE_PREFIX, index, gd->disk_name, DISK_NAME_LEN );
+			printk( "got iSCSI disk[%d]\n", index );
 			break;
-#endif
-#ifdef MY_ABC_HERE
+
 		case SYNO_DISK_SYNOBOOT:
 			// we assume synoboot will be plugged only once
 			sprintf(gd->disk_name, SYNO_USB_FLASH_DEVICE_NAME);
 			error = 0;
 			break;
-#endif
 
 		case SYNO_DISK_SAS:
-#ifdef SYNO_SAS_DISK_NAME
-			error = sd_format_sas_disk_name(SYNO_SAS_DEVICE_PREFIX, synoidx, gd->disk_name, DISK_NAME_LEN);
+			printk(KERN_DEBUG "%s: about to format the disk name for SAS: %s, %d, %s, %d",
+					__FUNCTION__, SYNO_SAS_DEVICE_PREFIX, index, gd->disk_name, DISK_NAME_LEN );
+
 			// block device
 			if (NULL != dev && 
 				// sas target
@@ -3305,33 +3334,43 @@ static int sd_probe(struct device *dev)
 					gd->systemDisk = 1;
 				}
 			}
-#endif
+
+			error = sd_format_disk_name( SYNO_SATA_DEVICE_PREFIX, index, gd->disk_name, DISK_NAME_LEN );
+			printk(KERN_DEBUG "%s: Status after formating the disk name for SAS: %d",
+                                 __FUNCTION__, error);
+			printk(KERN_DEBUG "%s: SAS disk name: %s and index %d",
+                                 __FUNCTION__, gd->disk_name, index );
 			break;
+
 		case SYNO_DISK_SATA:
 			ap = ata_shost_to_port(sdp->host);
+
 			// enuit is not system disk
 			if (NULL != ap && !syno_is_synology_pm(ap)) {
 				gd->systemDisk = 1;
 			}
 			error = sd_format_disk_name(SYNO_SATA_DEVICE_PREFIX, index, gd->disk_name, DISK_NAME_LEN);
 			break;
+
 		case SYNO_DISK_USB:
-		default:
-#ifdef SYNO_SAS_DISK_NAME
-			if (1 == g_is_sas_model) {
-				error = sd_format_sas_disk_name(SYNO_SAS_USB_DEVICE_PREFIX, synoidx, gd->disk_name, DISK_NAME_LEN);
-				break;
-			}
-#endif
 			error = sd_format_disk_name(SYNO_SATA_DEVICE_PREFIX, index, gd->disk_name, DISK_NAME_LEN);
+			break;
+
+		default:
+			error = sd_format_disk_name(SYNO_SATA_DEVICE_PREFIX, index, gd->disk_name, DISK_NAME_LEN);
+			printk(KERN_DEBUG "sd_probe: Got UNKNOWN disk %s with index %x\n", gd->disk_name, index);
+			gd->systemDisk = 1;
 			break;
 	}
 #else
 	error = sd_format_disk_name("sd", index, gd->disk_name, DISK_NAME_LEN);
 #endif
 
-	if (error) {
-		sdev_printk(KERN_WARNING, sdp, "SCSI disk (sd) name length exceeded.\n");
+	printk( KERN_DEBUG "%s: Is system disk: %d", __FUNCTION__, gd->systemDisk );
+
+	if ( error )
+	{
+		sdev_printk( KERN_WARNING, sdp, "SCSI disk (sd) name length exceeded.\n" );
 		goto out_free_index;
 	}
 
@@ -3369,33 +3408,35 @@ static int sd_probe(struct device *dev)
 		SYNO_CTRL_USB_HDD_LED_SET(0x4);
 	}
 #endif /*MY_ABC_HERE*/
+
 #ifdef MY_ABC_HERE
 	strlcpy(sdp->syno_disk_name, gd->disk_name, BDEVNAME_SIZE);
 #endif
 
 	return 0;
 
- out_free_index:
-	spin_lock(&sd_index_lock);
-	ida_remove(&sd_index_ida, index);
-#ifdef SYNO_SAS_DISK_NAME
-	if (1 == g_is_sas_model) {
-		switch(sdkp->synodisktype) {
+out_free_index:
+	spin_lock( &sd_index_lock );
 #ifdef MY_ABC_HERE
-			case SYNO_DISK_ISCSI:
-				ida_remove(&iscsi_index_ida, synoidx);
-				break;
-#endif
-			case SYNO_DISK_USB:
-				ida_remove(&usb_index_ida, synoidx);
-				break;
-			case SYNO_DISK_SAS:
-				ida_remove(&sas_index_ida, synoidx);
-				break;
-			default:
-				break;
-		}
+	switch ( sdkp->synodisktype )
+	{
+	case SYNO_DISK_ISCSI:
+		ida_remove( &iscsi_index_ida, index );
+		break;
+	case SYNO_DISK_SYNOBOOT:
+	case SYNO_DISK_USB:
+		ida_remove( &usb_index_ida, index );
+		break;
+	case SYNO_DISK_SAS:
+		ida_remove( &sas_index_ida, index );
+		break;
+	default:
+		ida_remove( &sd_index_ida, index );
+		break;
 	}
+
+#else
+	ida_remove( &sd_index_ida, index );
 #endif
 	spin_unlock(&sd_index_lock);
  out_put:
@@ -3712,6 +3753,7 @@ blIsScsiDevice(int major)
 	case SCSI_DISK0_MAJOR:
 	case SCSI_DISK1_MAJOR ... SCSI_DISK7_MAJOR:
 	case SCSI_DISK8_MAJOR ... SCSI_DISK15_MAJOR:
+	case XENVBD_MAJOR:
 		ret = 1;
 		break;
 	default:
